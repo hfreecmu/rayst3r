@@ -23,6 +23,9 @@ from utils.geometry import compute_pointmap_torch
 from eval_wrapper.eval_utils import npy2ply, filter_all_masks
 from huggingface_hub import hf_hub_download
 
+from vine_prune.utils.general_utils import read_K
+from vine_prune.utils.run import run_with_log
+
 class EvalWrapper(torch.nn.Module):
     def __init__(self,checkpoint_path,distributed=False,device="cuda",dtype=torch.float32,**kwargs):
         super().__init__()
@@ -383,7 +386,7 @@ def eval_scene(model, data_dir,visualize=False,rr_addr=None,run_octmae=False,set
     
     # uncomment this to visualize a simple TSDF
     if tsdf:
-        fused_meshes = fuse_batch(pred,gt,batch,voxel_size=0.002* 6.5535)
+        fused_meshes = fuse_batch(pred,gt,batch,voxel_size=0.002)
     else:
         fused_meshes = None
     
@@ -391,10 +394,99 @@ def eval_scene(model, data_dir,visualize=False,rr_addr=None,run_octmae=False,set
         just_load_viz(pred, gt, batch, addr=rr_addr,fused_meshes=fused_meshes)
     return all_points
 
+def symlink(src, dst):
+    if os.path.exists(dst):
+        os.remove(dst)
 
-def main():
+    os.symlink(src, dst)
+
+def eval_batch(args, model):
+    data_dir = args.data_dir
+    target_ind = args.target_ind
+
+    mask_objects_dir = os.path.join(data_dir, 'masks', 'objects')
+    image_dir = os.path.join(data_dir, 'undistorted')
+    depth_dir = os.path.join(data_dir, 'depth')
+    K_path = os.path.join(data_dir, 'cam_K.txt')
+
+    output_dir = os.path.join(data_dir, 'rayst3r')
+    if not os.path.exists(output_dir):
+        os.mkdir(output_dir)
+
+    K, _ = read_K(K_path)
+    K = torch.from_numpy(K)
+    torch_K_path = os.path.join(output_dir, 'intrinsics.pt')
+    torch.save(K, torch_K_path)
+
+    for label_identifier in os.listdir(mask_objects_dir):
+        obj_mask_dir = os.path.join(mask_objects_dir, label_identifier, 'mask_obj')
+
+        output_label_dir = os.path.join(output_dir, label_identifier)
+        if not os.path.exists(output_label_dir):
+            os.mkdir(output_label_dir)
+
+        filenames = []
+        for filename in os.listdir(obj_mask_dir):
+            if not filename.endswith('.png'):
+                continue
+
+            filenames.append(filename)
+
+        filenames = sorted(filenames)
+
+        for filename in filenames:    
+            basename = filename.split('.png')[0]
+
+            if target_ind is not None:
+                if int(basename) != target_ind:
+                    continue
+
+            print(f'Processing {label_identifier}, {filename}')
+
+            output_label_ind_dir = os.path.join(output_label_dir, basename)
+            if not os.path.exists(output_label_ind_dir):
+                os.mkdir(output_label_ind_dir)
+
+            mask_path = os.path.join(obj_mask_dir, filename)
+            depth_path = os.path.join(depth_dir, f'{basename}.png')
+            image_path = os.path.join(image_dir, f'{basename}.jpg')
+
+            output_torch_K_path = os.path.join(output_label_ind_dir, 'intrinsics.pt')
+            output_depth_path = os.path.join(output_label_ind_dir, 'depth.png')
+            output_image_path = os.path.join(output_label_ind_dir, 'rgb.png')
+            output_mask_path = os.path.join(output_label_ind_dir, 'mask.png')
+
+            symlink(torch_K_path, output_torch_K_path)
+            symlink(depth_path, output_depth_path)
+            symlink(image_path, output_image_path)
+            symlink(mask_path, output_mask_path)
+
+            all_points = eval_scene(model, output_label_ind_dir, visualize=args.visualize,rr_addr=args.rr_addr,run_octmae=args.run_octmae,set_conf=args.set_conf,
+                            no_input_mask=args.no_input_mask,no_pred_mask=args.no_pred_mask,no_filter_input_view=args.no_filter_input_view,false_positive=args.false_positive,
+                            false_negative=args.false_negative,n_pred_views=args.n_pred_views,
+                            do_filter_all_masks=args.filter_all_masks,tsdf=args.tsdf).cpu().numpy()
+            all_points = all_points * 6.5535
+            
+            o3d_pc = npy2ply(all_points,colors=None,normals=None)
+
+            all_points_save = os.path.join(output_label_ind_dir, 'inference_points.ply')
+            o3d.io.write_point_cloud(all_points_save, o3d_pc)
+
+def main(args):
+    print("Loading checkpoint from Huggingface")
+    rayst3r_checkpoint = hf_hub_download("bartduis/rayst3r", "rayst3r.pth")
+    
+    model = EvalWrapper(rayst3r_checkpoint,distributed=False)
+    eval_batch(args, model)
+    
+    # all_points_save = os.path.join(args.data_dir,"inference_points.ply")
+    # o3d_pc = npy2ply(all_points,colors=None,normals=None)
+    # o3d.io.write_point_cloud(all_points_save, o3d_pc)
+
+def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("data_dir", type=str)
+    parser.add_argument("--data_dir", type=str, required=True)
+    parser.add_argument("--target_ind", type=int, default=None)
     parser.add_argument("--rr_addr", type=str, default="0.0.0.0:"+os.getenv("RERUN_RECORDING","9876"))
     parser.add_argument("--visualize", action="store_true", default=False)
     parser.add_argument("--run_octmae", action="store_true", default=False)
@@ -409,18 +501,10 @@ def main():
     parser.add_argument("--false_positive", type=float, default=None)
     parser.add_argument("--false_negative", type=float, default=None)
     args = parser.parse_args()
-    
-    print("Loading checkpoint from Huggingface")
-    rayst3r_checkpoint = hf_hub_download("bartduis/rayst3r", "rayst3r.pth")
-    
-    model = EvalWrapper(rayst3r_checkpoint,distributed=False)
-    all_points = eval_scene(model, args.data_dir,visualize=args.visualize,rr_addr=args.rr_addr,run_octmae=args.run_octmae,set_conf=args.set_conf,
-                            no_input_mask=args.no_input_mask,no_pred_mask=args.no_pred_mask,no_filter_input_view=args.no_filter_input_view,false_positive=args.false_positive,
-                            false_negative=args.false_negative,n_pred_views=args.n_pred_views,
-                            do_filter_all_masks=args.filter_all_masks,tsdf=args.tsdf).cpu().numpy()
-    all_points_save = os.path.join(args.data_dir,"inference_points.ply")
-    o3d_pc = npy2ply(all_points,colors=None,normals=None)
-    o3d.io.write_point_cloud(all_points_save, o3d_pc)
+
+    return args
 
 if __name__ == "__main__":
-    main()
+    # main()
+    args = parse_args()
+    run_with_log(main, args, 'rayst3r', args.data_dir)

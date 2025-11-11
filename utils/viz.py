@@ -57,8 +57,8 @@ def save_pointmaps(data,path='debug',view=False,color='novelty',frustrum_scale=2
     return geometries
 
 def just_load_viz(pred_dict,gt_dict,batch,name='just_load_viz',addr='localhost:9000',fused_meshes=None,n_points=None):
-    rr.init(name)
-    rr.connect(addr)
+    rr.init(name, spawn=True)
+    # rr.connect(addr)
     rr.set_time_seconds("stable_time", 0)
 
     context_views = batch['input_cams']['pointmaps']
