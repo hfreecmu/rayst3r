@@ -406,7 +406,8 @@ def eval_batch(args, model):
 
     mask_objects_dir = os.path.join(data_dir, 'masks', 'objects')
     image_dir = os.path.join(data_dir, 'undistorted')
-    depth_dir = os.path.join(data_dir, 'depth')
+    # depth_dir = os.path.join(data_dir, 'depth')
+    depth_dir = os.path.join(data_dir, 'depth_v2')
     K_path = os.path.join(data_dir, 'cam_K.txt')
 
     output_dir = os.path.join(data_dir, 'rayst3r')
