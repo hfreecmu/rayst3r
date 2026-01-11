@@ -23,7 +23,7 @@ from utils.geometry import compute_pointmap_torch
 from eval_wrapper.eval_utils import npy2ply, filter_all_masks
 from huggingface_hub import hf_hub_download
 
-from vine_prune.utils.general_utils import read_K
+from vine_prune.utils.general_utils import read_K, get_label_identifiers
 from vine_prune.utils.run import run_with_log
 
 class EvalWrapper(torch.nn.Module):
@@ -419,7 +419,10 @@ def eval_batch(args, model):
     torch_K_path = os.path.join(output_dir, 'intrinsics.pt')
     torch.save(K, torch_K_path)
 
-    for label_identifier in os.listdir(mask_objects_dir):
+    label_identifiers = get_label_identifiers(data_dir)
+
+    # for label_identifier in os.listdir(mask_objects_dir):
+    for label_identifier in label_identifiers:
         obj_mask_dir = os.path.join(mask_objects_dir, label_identifier, 'mask_obj')
 
         output_label_dir = os.path.join(output_dir, label_identifier)
