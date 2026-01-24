@@ -419,7 +419,7 @@ def eval_batch(args, model):
     torch_K_path = os.path.join(output_dir, 'intrinsics.pt')
     torch.save(K, torch_K_path)
 
-    label_identifiers = get_label_identifiers(data_dir)
+    label_identifiers, is_scene = get_label_identifiers(data_dir, include_scene=True)
 
     # for label_identifier in os.listdir(mask_objects_dir):
     for label_identifier in label_identifiers:
