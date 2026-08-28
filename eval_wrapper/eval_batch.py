@@ -163,6 +163,7 @@ class GenericLoaderSmall(torch.utils.data.Dataset):
         self.rng = np.random.RandomState(seed=42)
         self.n_pred_views = n_pred_views
         self.min_depth = self.depth_metric_to_uint16(min_depth)
+        self.min_depth = min_depth * 1000.0
         if self.mode == "single_scene":
             self.inputs = [data_dir]
         self.pred_input_only = pred_input_only
